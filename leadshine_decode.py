@@ -33,6 +33,13 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
+# ignore the warning: MatplotlibDeprecationWarning: Using default event loop until function specific to this GUI is implemented
+import matplotlib
+import warnings
+warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+
+
+serial_port = '/dev/ttyUSB0'
 
 # scaling value to convert following error to millimeters
 # 4000 encoder pulses per revolution, and 5mm pitch ballscrew
@@ -161,15 +168,16 @@ def run_cmd(ser, cmd, do_read_response=True, expected_len=-1):
         if len(response) != 2:
             print 'run_cmd(): unexpected response1 len', response
 
-        d = response[0] << 8 | response[1]
+        #d = response[0] << 8 | response[1]
         #print desc, n, map(hex, response), hex(d), d
     elif ct == 0x06:
-        if len(response) != 4:
+        #if len(response) != 4:
+        if len(response) != 3:
             print 'run_cmd(): unexpected response2 len ', len(response), 'to', map(hex, cmd), map(hex, response)
             return None
 
-        d1 = response[0] << 8 | response[1]
-        d2 = response[2] << 8 | response[3]
+        #d1 = response[0] << 8 | response[1]
+        #d2 = response[2] << 8 | response[3]
         #print desc, n, map(hex, response), hex(d1), d1, hex(d2), d2
 
     return response
@@ -298,11 +306,12 @@ def scope_exec(ser, repeat=-1):
                 #line1.set_ydata(error)
                 #line1.set_data(range(len(error)), error)
                 line1.set_data(range(len(cummul_error)), cummul_error)
-                fig.canvas.draw()
+                #fig.canvas.draw()
                 ax.set_ylim(*ylimits)
                 ax.set_xlim(0, len(cummul_error))
-                time.sleep(0.05)
-                plt.pause(0.0001)
+                #time.sleep(0.05)
+                #plt.pause(0.0001)
+                plt.pause(0.05)
 
                 break
         if repeat >= 0:
@@ -403,7 +412,7 @@ def scope(ser):
 
 
 def open_serial():
-    ser = serial.Serial(port='/dev/ttyUSB0', baudrate=38400, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=1, xonxoff=False, rtscts=False, dsrdtr=False) #, write_timeout=None, dsrdtr=False) #, inter_byte_timeout=None)
+    ser = serial.Serial(port=serial_port, baudrate=38400, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=1, xonxoff=False, rtscts=False, dsrdtr=False) #, write_timeout=None, dsrdtr=False) #, inter_byte_timeout=None)
 
     #ser.reset_input_buffer()
     #ser.reset_output_buffer()
@@ -457,7 +466,8 @@ def main():
 
     #current_test(ser)
 
-    scope(ser)
+    if True:
+        scope(ser)
 
 
 if __name__ == "__main__":
