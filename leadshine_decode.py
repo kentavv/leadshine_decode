@@ -34,6 +34,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+# scaling value to convert following error to millimeters
+# 4000 encoder pulses per revolution, and 5mm pitch ballscrew
+step_scale = 1 / 4000. * 5.
+
+
 def modbus_crc(dat):
     crc = 0xffff
 
@@ -125,19 +130,18 @@ def send_introduction(ser):
     return response[-1] == 0x82
 
 
-def run_cmd(cmd, do_read_response=True, expected_len=-1):
+def run_cmd(ser, cmd, do_read_response=True, expected_len=-1):
     if cmd == None:
         time.sleep(.1)
         return None
 
     desc, default_v, rng, cmd = cmd
-#    cmd = bytearray([0x01, 0x03] + cmd)
     cmd = bytearray(cmd)
     cmd += modbus_crc(cmd)
 
     n = ser.write(cmd)
     if n != len(cmd):
-        print 'blah', cmd
+        print 'run_cmd(): incomplete serial write', cmd
         sys.exit(1)
 
     if not do_read_response:
@@ -150,30 +154,37 @@ def run_cmd(cmd, do_read_response=True, expected_len=-1):
         elif ct == 0x06:
             response = read_response(ser, 8)
         else:
-            print 'not sure what to do'
+            print 'run_cmd(): not sure what to do'
             sys.exit(1)
 
     if ct == 0x03:
         if len(response) != 2:
-            print 'unexpected response1 len', response
+            print 'run_cmd(): unexpected response1 len', response
 
         d = response[0] << 8 | response[1]
-        print desc, n, map(hex, response), hex(d), d
+        #print desc, n, map(hex, response), hex(d), d
     elif ct == 0x06:
         if len(response) != 4:
-            print 'unexpected response2 len', len(response)
+            print 'run_cmd(): unexpected response2 len ', len(response), 'to', map(hex, cmd), map(hex, response)
             return None
 
         d1 = response[0] << 8 | response[1]
         d2 = response[2] << 8 | response[3]
-        print desc, n, map(hex, response), hex(d1), d1, hex(d2), d2
+        #print desc, n, map(hex, response), hex(d1), d1, hex(d2), d2
 
     return response
 
 
-def run_cmds(cmds):
+def run_cmds(ser, cmds, print_response=False):
     for cmd in cmds:
-        run_cmd(cmd)
+        response = run_cmd(ser, cmd)
+
+        if print_response:
+            if len(response) != 2:
+                print 'unexpected length for', cmd
+                continue
+            d = response[0] << 8 | response[1]
+            print cmd[0], d
 
 
 def read_parameters(ser):
@@ -202,19 +213,19 @@ def read_parameters(ser):
       ['current loop auto-configuration?',  1,       [0, 1], [0x01, 0x03, 0x00, 0x40, 0x00, 0x01]]
     ]
 
-    run_cmds(cmds)
+    run_cmds(ser, cmds, True)
 
 
 def read_settings(ser):
     cmds = [
-      ['d1',             None, None, [0x01, 0x03, 0x00, 0xFD, 0x00, 0x01]],
-      ['d2',             None, None, [0x01, 0x03, 0x00, 0xFF, 0x00, 0x01]],
-      ['d3',             None, None, [0x01, 0x03, 0x00, 0x97, 0x00, 0x01]],
-      ['d4',             None, None, [0x01, 0x03, 0x00, 0x96, 0x00, 0x01]],
-      ['d5',             None, None, [0x01, 0x03, 0x00, 0x90, 0x00, 0x01]],
-      ['d6',             None, None, [0x01, 0x03, 0x00, 0x54, 0x00, 0x01]],
+      ['setting1',       None, None, [0x01, 0x03, 0x00, 0xFD, 0x00, 0x01]],
+      ['setting2',       None, None, [0x01, 0x03, 0x00, 0xFF, 0x00, 0x01]],
+      ['setting3',       None, None, [0x01, 0x03, 0x00, 0x97, 0x00, 0x01]],
+      ['setting4',       None, None, [0x01, 0x03, 0x00, 0x96, 0x00, 0x01]],
+      ['setting5',       None, None, [0x01, 0x03, 0x00, 0x90, 0x00, 0x01]],
+      ['setting6',       None, None, [0x01, 0x03, 0x00, 0x54, 0x00, 0x01]],
       ['filtering time', None, None, [0x01, 0x03, 0x00, 0x55, 0x00, 0x01]],
-      ['d8',             None, None, [0x01, 0x03, 0x00, 0x4F, 0x00, 0x01]]
+      ['setting8',       None, None, [0x01, 0x03, 0x00, 0x4F, 0x00, 0x01]]
     ]
 
     # d1 2 ['0x0', '0x82'] 0x82 130
@@ -226,7 +237,7 @@ def read_settings(ser):
     # d7 2 ['0x64', '0x0'] 0x6400 25600
     # d8 2 ['0x0', '0x0'] 0x0 0
 
-    run_cmds(cmds)
+    run_cmds(ser, cmds, True)
 
 
 def read_motor_settings(ser):
@@ -240,22 +251,27 @@ def read_motor_settings(ser):
     # e2 2 ['0x3', '0xe8'] 0x3e8 1000
     # e3 2 ['0xf', '0xa0'] 0xfa0 4000
 
-    run_cmds(cmds)
+    run_cmds(ser, cmds, True)
 
 
 def scope_setup(ser):
     cmds = [
-      #'k4', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms
+      # the last word sets the duration in 10ms increments, i.e. 0x000a = 10 -> 10 * 10ms = 100ms
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x01, 0x2C]], # 3000 ms
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms
       ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0a]], # 100 ms
-      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0x41, 0x00, 0x01]],
-      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0x42, 0x00, 0x00]]
+      ['scope_setup2', None, None, [0x01, 0x06, 0x00, 0x41, 0x00, 0x01]],
+      ['scope_setup3', None, None, [0x01, 0x06, 0x00, 0x42, 0x00, 0x00]]
     ]
 
-    run_cmds(cmds[:3])
+    #'k4', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms
+
+    run_cmds(ser, cmds)
 
 
 def scope_exec(ser, repeat=-1):
-    ylimits = [-10, 10]
+    #ylimits = [-10, 10]
+    ylimits = [-1, 1]
 
     cmds = [
       ['scope_begin', None, None, [0x01, 0x06, 0x00, 0x14, 0x00, 0x01]], # begin
@@ -275,13 +291,18 @@ def scope_exec(ser, repeat=-1):
 
     #time.sleep(.5)
     while repeat == -1 or repeat > 0:
-        run_cmd(cmds[0])
+        # request sampling of data of specified duration
+        run_cmd(ser, cmds[0])
+
+        # loop until the response indicates the sampling is complete
         while True:
             time.sleep(.05)
-            response = run_cmd(cmds[1])
-            print 'R', len(response), map(hex, response)
+            response = run_cmd(ser, cmds[1])
+            #print 'R', len(response), map(hex, response)
+
+            # check if sampling is complete
             if response[-1]  == 0x02:
-                run_cmd(cmds[2], False)
+                run_cmd(ser, cmds[2], False)
 
                 msg = read_response(ser, 405)
                 # error = []
@@ -291,15 +312,23 @@ def scope_exec(ser, repeat=-1):
                         v = -(v ^ 0xffff)
                     return v
                 error = map(h, zip(msg[0::2], msg[1::2]))
-                print error
+                error = map(lambda x: x * step_scale, error)
+                #print error
 
                 cummul_error += error
                 if len(cummul_error) > 200*5:
                     cummul_error = cummul_error[-200*5:]
-                print len(cummul_error)
+                #print len(cummul_error)
 
-                ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
-                ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+                #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
+                #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+                ylimits[0] = min(cummul_error)
+                ylimits[1] = max(cummul_error)
+                ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
+                ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
+                if ylimits[0] == ylimits[1]:
+                    ylimits[0] = -.01
+                    ylimits[1] = .01
 
                 #line1.set_xdata(range(len(error)))
                 #line1.set_ydata(error)
@@ -336,7 +365,7 @@ def motion_test(ser):
     # f7 2 ['0x0', '0x1'] 0x1 1
 
     # read motion test parameters
-    run_cmds(cmds)
+    run_cmds(ser, cmds)
 
     cmds = [
       ['i1',   None, None, [0x01, 0x06, 0x00, 0x15, 0x07, 0xD0]],
@@ -353,7 +382,7 @@ def motion_test(ser):
     ]
 
     # execute motion test
-    run_cmds(cmds)
+    run_cmds(ser, cmds)
     scope_exec(ser)
 
 
@@ -367,26 +396,26 @@ def current_test(ser):
       ['current_test end', None, None, [0x01, 0x06, 0x00, 0x02, 0x00, 0x00]] #       5.752s  5.754s          [0x01, 0x06, 0x00, 0x02, 0x00, 0x00, 0x28, 0x0A]
     ]
 
-    run_cmd(cmds[0], False)
+    run_cmd(ser, cmds[0], False)
     msg = read_response(ser, 8)
     print map(hex, msg)
 
-    run_cmd(cmds[1], False)
+    run_cmd(ser, cmds[1], False)
     msg = read_response(ser, 8)
     print map(hex, msg)
 
-    run_cmd(cmds[2], False)
+    run_cmd(ser, cmds[2], False)
     msg = read_response(ser, 8)
     print map(hex, msg)
 
-    run_cmd(cmds[3], False)
+    run_cmd(ser, cmds[3], False)
     msg = read_response(ser, 8)
     print map(hex, msg)
     msg = read_response(ser, 8)
     if msg:
         print map(hex, msg)
 
-    run_cmd(cmds[4], False)
+    run_cmd(ser, cmds[4], False)
     msg = read_response(ser, 405)
     #print map(hex, msg)
 
@@ -398,7 +427,7 @@ def current_test(ser):
     error = map(h, zip(msg[0::2], msg[1::2]))
     print error
 
-    run_cmd(cmds[5], False)
+    run_cmd(ser, cmds[5], False)
     msg = read_response(ser, 8)
     print map(hex, msg)
 
@@ -425,29 +454,13 @@ def open_serial():
     return ser
 
 
-def main():
-    ser = open_serial()
-
-    if not send_introduction(ser):
-        print 'failed introduction'
-        sys.exit(1)
-
-
-    #read_parameters(ser)
-
-    #read_settings(ser)
-
-    #read_motor_settings(ser)
-
-    #motion_test(ser)
-
-
+def other_cmds(ser):
     #cmds = [
     #['g1', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x0A]],
     #['g2', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x01]]
     #]
 
-    #run_cmds(cmds)
+    #run_cmds(ser, cmds)
 
     cmds = [
     ['h1', None, None, [0x01, 0x03, 0x00, 0x16, 0x00, 0x01]],
@@ -459,11 +472,25 @@ def main():
     ['h7', None, None, [0x01, 0x03, 0x00, 0x1C, 0x00, 0x01]]
     ]
 
-    #run_cmds(cmds)
+    #run_cmds(ser, cmds)
 
-    #sys.exit(1)
 
-    #18
+def main():
+    ser = open_serial()
+
+    if not send_introduction(ser):
+        print 'failed introduction'
+        sys.exit(1)
+
+    if True:
+        read_parameters(ser)
+        read_settings(ser)
+        read_motor_settings(ser)
+
+    if False:
+        motion_test(ser)
+
+    #latest_cmds(ser)
 
     #current_test(ser)
 
