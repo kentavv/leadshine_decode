@@ -252,10 +252,11 @@ def scope_exec(ser, repeat=-1):
     ]
 
     fig = plt.figure()
+    fig.canvas.set_window_title('Following-error')
     ax = fig.add_subplot(1, 1, 1)
     ax.set_xlabel('time (ms)')
     ax.set_ylabel('position error')
-    line1, = ax.plot(range(200), range(200), linestyle='solid', marker='o')
+    line1, = ax.plot(range(200), range(200), linestyle='solid', marker='o', markersize=4)
     plt.ion()
     plt.show()
 
