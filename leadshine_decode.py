@@ -90,13 +90,14 @@ def read_response(ser, expected_len=-1):
         if v == '\x01\x03' or v == '\x01\x06':
             break
         else:
-            print 'discarding:', hex(bytearray(v)[0])
+            print 'read_response(): discarding:', hex(bytearray(v)[0])
             v = v[1:]
 
     # read length (number of bytes) and append to message
     # this does not appear to actually be the length
     n = ser.read(1)
     if len(n) == 0:
+        print 'read_response(): zero length read'
         return None
     v += n
     n = bytearray(n)
@@ -105,17 +106,17 @@ def read_response(ser, expected_len=-1):
     # read remainder of message and checksum
     v += ser.read(expected_len - len(v))
     if expected_len != -1 and len(v) != expected_len:
-        print 'n != expected_len', n, expected_len
+        print 'read_response(): n != expected_len', n, expected_len
         return None
     v = bytearray(v)
 
     #print map(hex, v)
 
     if not check_header(v):
-        print 'failed header', map(hex, v)
+        print 'read_response(): failed header', map(hex, v)
         sys.exit(1)
     if not check_crc(v):
-        print 'failed crc', map(hex, v)
+        print 'read_response(): failed crc', map(hex, v)
 
     v = v[3:-2]
 
@@ -163,6 +164,10 @@ def run_cmd(ser, cmd, do_read_response=True, expected_len=-1):
         else:
             print 'run_cmd(): not sure what to do'
             sys.exit(1)
+
+    if response == None:
+        print 'run_cmd(): empty_response'
+        return None
 
     if ct == 0x03:
         if len(response) != 2:
@@ -271,6 +276,9 @@ def scope_exec(ser, repeat=-1):
         while True:
             time.sleep(.05)
             response = run_cmd(ser, cmds[1])
+            if response == None:
+                print 'scope_exec(): empty_response'
+                continue
             #print 'R', len(response), map(hex, response)
 
             # check if sampling is complete
