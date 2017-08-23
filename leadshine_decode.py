@@ -267,6 +267,10 @@ def scope_exec(ser, repeat=-1):
 
     cummul_error = []
 
+    ylimits_max = [0, 0]
+    line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
+    line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
+
     #time.sleep(.5)
     while repeat == -1 or repeat > 0:
         # request sampling of data of specified duration
@@ -305,6 +309,10 @@ def scope_exec(ser, repeat=-1):
                 #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
                 ylimits[0] = min(cummul_error)
                 ylimits[1] = max(cummul_error)
+                ylimits[0] = min(ylimits[0], ylimits_max[0])
+                ylimits[1] = max(ylimits[1], ylimits_max[1])
+                ylimits_max[0] = min(ylimits[0], ylimits_max[0])
+                ylimits_max[1] = max(ylimits[1], ylimits_max[1])
                 ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
                 ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
                 if ylimits[0] == ylimits[1]:
@@ -315,8 +323,10 @@ def scope_exec(ser, repeat=-1):
                 #line1.set_ydata(error)
                 #line1.set_data(range(len(error)), error)
                 line1.set_data(range(len(cummul_error)), cummul_error)
+                line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
+                line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
                 #fig.canvas.draw()
-                ax.set_ylim(*ylimits)
+                ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
                 ax.set_xlim(0, len(cummul_error))
                 #time.sleep(0.05)
                 #plt.pause(0.0001)
