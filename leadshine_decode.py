@@ -34,9 +34,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # ignore the warning: MatplotlibDeprecationWarning: Using default event loop until function specific to this GUI is implemented
+# older systems will not have the warning to ignore
 import matplotlib
 import warnings
-warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+
+try:
+    warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+except AttributeError:
+    pass
 
 
 serial_port = '/dev/ttyUSB0'
@@ -44,6 +49,7 @@ serial_port = '/dev/ttyUSB0'
 # scaling value to convert following error to millimeters
 # 4000 encoder pulses per revolution, and 5mm pitch ballscrew
 step_scale = 1 / 4000. * 5.
+position_error_label = 'position error (mm)'
 
 
 def modbus_crc(dat):
@@ -130,7 +136,7 @@ def send_introduction(ser):
 
     n = ser.write(introduction)
     if n != len(introduction):
-        print 'introduction was truncated'
+        print 'send_introduction(): introduction was truncated'
         sys.exit(1)
 
     response = read_response(ser, 7)
@@ -256,12 +262,15 @@ def scope_exec(ser, repeat=-1):
       ['scope_end',   None, None, [0x01, 0x03, 0x00, 0x14, 0x00, 0xc8]]  # end
     ]
 
+    # there are 200 samples regardless of sampling duration, each reading is a word
+    ns = 200
+
     fig = plt.figure()
     fig.canvas.set_window_title('Following-error')
     ax = fig.add_subplot(1, 1, 1)
     ax.set_xlabel('time (ms)')
-    ax.set_ylabel('position error')
-    line1, = ax.plot(range(200), range(200), linestyle='solid', marker='o', markersize=4)
+    ax.set_ylabel(position_error_label)
+    line_error, = ax.plot(range(ns), range(ns), linestyle='solid', marker='o', markersize=4)
     plt.ion()
     plt.show()
 
@@ -271,40 +280,8 @@ def scope_exec(ser, repeat=-1):
     line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
     line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
 
-    #time.sleep(.5)
-    while repeat == -1 or repeat > 0:
-        # request sampling of data of specified duration
-        run_cmd(ser, cmds[0])
-
-        # loop until the response indicates the sampling is complete
-        while True:
-            time.sleep(.05)
-            response = run_cmd(ser, cmds[1])
-            if response == None:
-                print 'scope_exec(): empty_response'
-                continue
-            #print 'R', len(response), map(hex, response)
-
-            # check if sampling is complete
-            if response[-1]  == 0x02:
-                run_cmd(ser, cmds[2], False)
-
-                msg = read_response(ser, 405)
-                # error = []
-                def h(v):
-                    v = (v[0] << 8) | (v[1])
-                    if v & 0x8000:
-                        v = -(v ^ 0xffff)
-                    return v
-                error = map(h, zip(msg[0::2], msg[1::2]))
-                error = map(lambda x: x * step_scale, error)
-                #print error
-
-                cummul_error += error
-                if len(cummul_error) > 200*5:
-                    cummul_error = cummul_error[-200*5:]
-                #print len(cummul_error)
-
+    def plot_error():
+        if cummul_error != []:
                 #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
                 #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
                 ylimits[0] = min(cummul_error)
@@ -319,10 +296,10 @@ def scope_exec(ser, repeat=-1):
                     ylimits[0] = -.01
                     ylimits[1] = .01
 
-                #line1.set_xdata(range(len(error)))
-                #line1.set_ydata(error)
-                #line1.set_data(range(len(error)), error)
-                line1.set_data(range(len(cummul_error)), cummul_error)
+                #line_error.set_xdata(range(len(error)))
+                #line_error.set_ydata(error)
+                #line_error.set_data(range(len(error)), error)
+                line_error.set_data(range(len(cummul_error)), cummul_error)
                 line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
                 line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
                 #fig.canvas.draw()
@@ -330,9 +307,49 @@ def scope_exec(ser, repeat=-1):
                 ax.set_xlim(0, len(cummul_error))
                 #time.sleep(0.05)
                 #plt.pause(0.0001)
-                plt.pause(0.05)
+                plt.pause(0.001)
+
+
+    #time.sleep(.5)
+    while repeat == -1 or repeat > 0:
+        # request sampling of data of specified duration
+        run_cmd(ser, cmds[0])
+	# overlap the sampling with the updating of the graph
+	plot_error()
+
+        # loop until the response indicates the sampling is complete
+        while True:
+            time.sleep(.001)
+            response = run_cmd(ser, cmds[1])
+            if response == None:
+                print 'scope_exec(): empty_response'
+                continue
+            #print 'R', len(response), map(hex, response)
+
+            # check if sampling is complete
+            if response[-1]  == 0x02:
+                run_cmd(ser, cmds[2], False)
+
+                # each reading is a word, so ns*2
+                msg = read_response(ser, 3+ns*2+2)
+                # error = []
+                def h(v):
+                    v = (v[0] << 8) | (v[1])
+                    if v & 0x8000:
+                        v = -(v ^ 0xffff)
+                    return v
+                # join bytes of each word, and then convert to desired units
+                error = map(h, zip(msg[0::2], msg[1::2]))
+                error = map(lambda x: x * step_scale, error)
+		#print time.time(), len(error), error
+
+                cummul_error += error
+                if len(cummul_error) > ns*5:
+                    cummul_error = cummul_error[-ns*5:]
+                #print len(cummul_error)
 
                 break
+
         if repeat >= 0:
             repeat -= 1
 
@@ -472,7 +489,7 @@ def main():
     ser = open_serial()
 
     if not send_introduction(ser):
-        print 'failed introduction'
+        print 'main(): failed introduction'
         sys.exit(1)
 
     if True:
