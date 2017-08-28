@@ -242,7 +242,8 @@ def scope_setup(ser):
       # the last word sets the duration in 10ms increments, i.e. 0x000a = 10 -> 10 * 10ms = 100ms
       #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x01, 0x2C]], # 3000 ms
       #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms
-      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0a]], # 100 ms
+      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0b]], # 200 ms
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0a]], # 100 ms
       ['scope_setup2', None, None, [0x01, 0x06, 0x00, 0x41, 0x00, 0x01]],
       ['scope_setup3', None, None, [0x01, 0x06, 0x00, 0x42, 0x00, 0x00]]
     ]
@@ -270,7 +271,7 @@ def scope_exec(ser, repeat=-1):
     ax = fig.add_subplot(1, 1, 1)
     ax.set_xlabel('time (ms)')
     ax.set_ylabel(position_error_label)
-    line_error, = ax.plot(range(ns), range(ns), linestyle='solid', marker='o', markersize=4)
+    line_error, = ax.plot(range(ns), range(ns), linestyle=':') #, marker='o', markersize=4)
     plt.ion()
     plt.show()
 
@@ -279,11 +280,19 @@ def scope_exec(ser, repeat=-1):
     ylimits_max = [0, 0]
     line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
     line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
+    line_avg = plt.axhline(y=ylimits_max[1], color='g', linestyle='-')
+    text_min = plt.text(0, 0, '')
+    text_max = plt.text(0, 0, '')
+    text_avg = plt.text(0, 0, '')
 
     def plot_error():
         if cummul_error != []:
                 #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
                 #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+                avg_error = sum(cummul_error) / len(cummul_error)
+                #avg_error = np.mean(cummul_error)
+                #avg_error = np.median(cummul_error)
+
                 ylimits[0] = min(cummul_error)
                 ylimits[1] = max(cummul_error)
                 ylimits[0] = min(ylimits[0], ylimits_max[0])
@@ -302,18 +311,32 @@ def scope_exec(ser, repeat=-1):
                 line_error.set_data(range(len(cummul_error)), cummul_error)
                 line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
                 line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
+                line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
                 #fig.canvas.draw()
                 ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
                 ax.set_xlim(0, len(cummul_error))
+
+                for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
+                    obj.set_y(v)
+                    obj.set_text('{0:.3f} mm'.format(v))
+
                 #time.sleep(0.05)
                 #plt.pause(0.0001)
                 plt.pause(0.001)
 
-
+    #run_cmd(ser, cmds[0])
     #time.sleep(.5)
     while repeat == -1 or repeat > 0:
         # request sampling of data of specified duration
         run_cmd(ser, cmds[0])
+
+        # on the test system, the overhead to read the samples from the drive was 130ms.
+        # the overhead is unavoidable because the samples must be read before the next sampling period can be begin
+        # reading the samples alone, not considering the sending the request, will require at least 85 ms
+        # (405 bytes / sample read) * (8 bits / byte) / (38400 kilo bits / sec) = 85 ms / sample read
+        # the graph update required > 150ms
+        # these are enormous overheads when the sampling rate is 100ms
+
 	# overlap the sampling with the updating of the graph
 	plot_error()
 
@@ -332,6 +355,12 @@ def scope_exec(ser, repeat=-1):
 
                 # each reading is a word, so ns*2
                 msg = read_response(ser, 3+ns*2+2)
+
+                # starting the new sampling period immediately does not decrease the perceived overhead
+                #run_cmd(ser, cmds[0])
+                #print time.time()
+                #continue
+
                 # error = []
                 def h(v):
                     v = (v[0] << 8) | (v[1])
@@ -344,8 +373,8 @@ def scope_exec(ser, repeat=-1):
 		#print time.time(), len(error), error
 
                 cummul_error += error
-                if len(cummul_error) > ns*5:
-                    cummul_error = cummul_error[-ns*5:]
+                if len(cummul_error) > ns*5*10:
+                    cummul_error = cummul_error[-ns*5*10:]
                 #print len(cummul_error)
 
                 break
