@@ -416,7 +416,6 @@ def scope_exec(ser, repeat=-1):
     #run_cmd(ser, cmds[0])
     #time.sleep(.5)
 
-    rt_0 = None
     t1 = timing() # request through response
     t2 = timing() # response only
     t3 = timing() # update to update
@@ -428,8 +427,6 @@ def scope_exec(ser, repeat=-1):
         # request sampling of data of configured duration
         t1.start()
         rt_s = time.time()
-        if rt_0 == None:
-            rt_0 = rt_s
         run_cmd(ser, cmds[0])
 
         # overlap the sampling with the updating of the graph
@@ -479,6 +476,7 @@ def scope_exec(ser, repeat=-1):
 
                 cummul_error += error
                 cummul_error_x += list(np.linspace(rt_s, rt_e, num=ns, endpoint=True))
+                # remove data from the front of the buffers until only the last_x seconds remain
                 while cummul_error_x[-1] - cummul_error_x[0] > last_x_sec:
                     cummul_error = cummul_error[100:]
                     cummul_error_x = cummul_error_x[100:]
