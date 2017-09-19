@@ -1,20 +1,20 @@
 #!/usr/bin/env python
 
-# 
+#
 # MIT License
-# 
+#
 # Copyright (c) 2016, 2017 Kent A. Vander Velden
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -22,10 +22,34 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-# 
+#
 # Kent A. Vander Velden
 # kent.vandervelden@gmail.com
 # Originally written August 23, 2016
+
+
+# Important information on timing overhead
+#
+# On the test system, the overhead to read the samples from the drive was 130ms.
+# The overhead is unavoidable, the samples must be read before the next sampling period can be begin.
+# Reading the samples alone, not considering sending the request, will require at least 85 ms.
+#     (405 bytes / sample read) * (8 bits / byte) / (38400 kilo bits / sec) = 85 ms / sample read
+# Graph updates require > 150ms, but this is done between request and response readout, which
+# will completely hide the graph update if the sampling time is at least 50ms.
+# These are enormous overheads when the sampling duration is 100ms.
+#
+# There is ~12.8 overhead in sending and recogniznig the response is ready, add this to sample time.
+# There is ~112.6ms overhead in receiving the response.
+# Regardless of sampling duration, response is always 200 values.
+# There is < 0.5ms additional overhead, typically.
+# Response readout must be completed before new request is sent, unable to overlap the two.
+# Graphing should create no additional overhead, it's performed while waiting for a response
+# for "continous" readout.
+# Choose a sampling duration that is not dominated by the response readout, but frequent
+# enough to have a decent sampling frequency to cover desired event.
+# There's only 200 values returned regardless of sampling duration, and a short enough
+# duration to allow regular graph updates
+
 
 import sys
 import serial
@@ -39,17 +63,26 @@ import matplotlib
 import warnings
 
 try:
-    warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+    warnings.filterwarnings("ignore", category=matplotlib.cbook.mplDeprecation)
 except AttributeError:
     pass
+
+from timing import *
 
 
 serial_port = '/dev/ttyUSB0'
 
 # scaling value to convert following error to millimeters
 # 4000 encoder pulses per revolution, and 5mm pitch ballscrew
-step_scale = 1 / 4000. * 5.
+# updated after reading parameters
+leadscrew_pitch = 5.
+step_scale = 1. / 4000. * leadscrew_pitch
 position_error_label = 'position error (mm)'
+
+# maximum allowed following-error
+# updated after reading parameters
+fe_max = 1000
+zoom_plot_fe_max = False
 
 
 def modbus_crc(dat):
@@ -79,11 +112,9 @@ def check_crc(dat):
 
 
 def check_header(dat): # ct = 0x03 or 0x06
-    msg = dat[2:]
-    header1 = dat[:2]
-    header2a = bytearray([0x01, 0x03])
-    header2b = bytearray([0x01, 0x06])
-    return header1 == header2a or header1 == header2b
+    header = dat[:2]
+    known_headers = [bytearray([0x01, 0x03]), bytearray([0x01, 0x06])]
+    return header in known_headers
 
 
 def read_response(ser, expected_len=-1):
@@ -91,9 +122,9 @@ def read_response(ser, expected_len=-1):
     v = ser.read(1)
     while True:
         v += ser.read(1)
-        if len(v) == 0 or len(v) == 1:
+        if len(v) < 2:
             return None
-        if v == '\x01\x03' or v == '\x01\x06':
+        if v in ['\x01\x03', '\x01\x06']:
             break
         else:
             print 'read_response(): discarding:', hex(bytearray(v)[0])
@@ -195,6 +226,8 @@ def run_cmd(ser, cmd, do_read_response=True, expected_len=-1):
 
 
 def run_cmds(ser, cmds, print_response=False):
+    rv = {}
+
     for cmd in cmds:
         response = run_cmd(ser, cmd)
 
@@ -204,6 +237,9 @@ def run_cmds(ser, cmds, print_response=False):
                 continue
             d = response[0] << 8 | response[1]
             print cmd[0], d
+            rv[cmd[0]] = d
+
+    return rv
 
 
 def read_parameters(ser):
@@ -234,16 +270,26 @@ def read_parameters(ser):
       ['current loop auto-configuration?',  1,       [0, 1], [0x01, 0x03, 0x00, 0x40, 0x00, 0x01]]
     ]
 
-    run_cmds(ser, cmds, True)
+    rv = run_cmds(ser, cmds, True)
+
+    fe_max = rv['position error limit (pulses)']
+    ppr = rv['pulses / revolution']
+    step_scale = 1. / ppr * leadscrew_pitch
+    print
+    print 'Following-error limit updated to', fe_max, 'mm'
+    print 'Step scale factor updated to', step_scale, 'mm/step'
 
 
 def scope_setup(ser):
+    # see notes at top of file regarding timing limitations and overhead
+
     cmds = [
       # the last word sets the duration in 10ms increments, i.e. 0x000a = 10 -> 10 * 10ms = 100ms
-      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x01, 0x2C]], # 3000 ms
-      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms
-      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0b]], # 200 ms
-      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0a]], # 100 ms
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x01, 0x2C]], # 3000 ms sampling (~3097 ms total)
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x64]], # 1000 ms sampling (~1119 ms total)
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x28]], # 400 ms sampling (~527 ms total)
+      ['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x14]], # 200 ms sampling (~328 ms total)
+      #['scope_setup1', None, None, [0x01, 0x06, 0x00, 0xD0, 0x00, 0x0a]], # 100 ms sampling (~230 ms total)
       ['scope_setup2', None, None, [0x01, 0x06, 0x00, 0x41, 0x00, 0x01]],
       ['scope_setup3', None, None, [0x01, 0x06, 0x00, 0x42, 0x00, 0x00]]
     ]
@@ -280,65 +326,74 @@ def scope_exec(ser, repeat=-1):
     ylimits_max = [0, 0]
     line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
     line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
-    line_avg = plt.axhline(y=ylimits_max[1], color='g', linestyle='-')
+    line_avg = plt.axhline(y=0, color='g', linestyle='-')
     text_min = plt.text(0, 0, '')
     text_max = plt.text(0, 0, '')
     text_avg = plt.text(0, 0, '')
+    fe_lims = {'-fe limit': -fe_max * step_scale, '+fe limit': fe_max * step_scale}
+    for k,v in fe_lims.items():
+        plt.axhline(y=v, color='b', linestyle='-')
+        plt.text(0, v, k)
 
     def plot_error():
         if cummul_error != []:
-                #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
-                #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
-                avg_error = sum(cummul_error) / len(cummul_error)
-                #avg_error = np.mean(cummul_error)
-                #avg_error = np.median(cummul_error)
+            #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
+            #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+            avg_error = sum(cummul_error) / len(cummul_error)
+            #avg_error = np.mean(cummul_error)
+            #avg_error = np.median(cummul_error)
 
-                ylimits[0] = min(cummul_error)
-                ylimits[1] = max(cummul_error)
-                ylimits[0] = min(ylimits[0], ylimits_max[0])
-                ylimits[1] = max(ylimits[1], ylimits_max[1])
-                ylimits_max[0] = min(ylimits[0], ylimits_max[0])
-                ylimits_max[1] = max(ylimits[1], ylimits_max[1])
-                ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
-                ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
-                if ylimits[0] == ylimits[1]:
-                    ylimits[0] = -.01
-                    ylimits[1] = .01
+            ylimits[0] = min(cummul_error)
+            ylimits[1] = max(cummul_error)
+            ylimits[0] = min(ylimits[0], ylimits_max[0])
+            ylimits[1] = max(ylimits[1], ylimits_max[1])
+            ylimits_max[0] = min(ylimits[0], ylimits_max[0])
+            ylimits_max[1] = max(ylimits[1], ylimits_max[1])
+            ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
+            ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
+            if ylimits[0] == ylimits[1]:
+                ylimits[0] = -.01
+                ylimits[1] = .01
 
-                #line_error.set_xdata(range(len(error)))
-                #line_error.set_ydata(error)
-                #line_error.set_data(range(len(error)), error)
-                line_error.set_data(range(len(cummul_error)), cummul_error)
-                line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
-                line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
-                line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
-                #fig.canvas.draw()
-                ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
-                ax.set_xlim(0, len(cummul_error))
+            if zoom_plot_fe_max:
+                ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
+                ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
 
-                for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
-                    obj.set_y(v)
-                    obj.set_text('{0:.3f} mm'.format(v))
+            #line_error.set_xdata(range(len(error)))
+            #line_error.set_ydata(error)
+            #line_error.set_data(range(len(error)), error)
+            line_error.set_data(range(len(cummul_error)), cummul_error)
+            line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
+            line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
+            line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
+            #fig.canvas.draw()
+            ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
+            ax.set_xlim(0, len(cummul_error))
 
-                #time.sleep(0.05)
-                #plt.pause(0.0001)
-                plt.pause(0.001)
+            for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
+                obj.set_y(v)
+                obj.set_text('{0:.3f} mm'.format(v))
+
+            #time.sleep(0.05)
+            #plt.pause(0.0001)
+            plt.pause(0.001)
 
     #run_cmd(ser, cmds[0])
     #time.sleep(.5)
+
+    t1 = timing() # request through response
+    t2 = timing() # response only
+    t3 = timing() # update to update
+    timing.enable()
+
+    # see notes at top of file regarding timing limitations and overhead
     while repeat == -1 or repeat > 0:
-        # request sampling of data of specified duration
+        # request sampling of data of configured duration
+        t1.start()
         run_cmd(ser, cmds[0])
 
-        # on the test system, the overhead to read the samples from the drive was 130ms.
-        # the overhead is unavoidable because the samples must be read before the next sampling period can be begin
-        # reading the samples alone, not considering the sending the request, will require at least 85 ms
-        # (405 bytes / sample read) * (8 bits / byte) / (38400 kilo bits / sec) = 85 ms / sample read
-        # the graph update required > 150ms
-        # these are enormous overheads when the sampling rate is 100ms
-
-	# overlap the sampling with the updating of the graph
-	plot_error()
+        # overlap the sampling with the updating of the graph
+        plot_error()
 
         # loop until the response indicates the sampling is complete
         while True:
@@ -352,9 +407,13 @@ def scope_exec(ser, repeat=-1):
             # check if sampling is complete
             if response[-1]  == 0x02:
                 run_cmd(ser, cmds[2], False)
+                t1.lap()
+
 
                 # each reading is a word, so ns*2
+                t2.start()
                 msg = read_response(ser, 3+ns*2+2)
+                t2.lap()
 
                 # starting the new sampling period immediately does not decrease the perceived overhead
                 #run_cmd(ser, cmds[0])
@@ -370,7 +429,10 @@ def scope_exec(ser, repeat=-1):
                 # join bytes of each word, and then convert to desired units
                 error = map(h, zip(msg[0::2], msg[1::2]))
                 error = map(lambda x: x * step_scale, error)
-		#print time.time(), len(error), error
+                #print time.time(), dt, len(error), error
+                t3.lap()
+                if timing.enabled:
+                    print 'last,min,avg,max', 'req:', t1, 'resp:', t2, 'total:', t3
 
                 cummul_error += error
                 if len(cummul_error) > ns*5*10:
@@ -527,14 +589,14 @@ def main():
     if False:
         motion_test(ser)
 
-    #latest_cmds(ser)
-
-    #current_test(ser)
+    if False:
+        current_test(ser)
 
     if True:
         scope(ser)
 
+    #latest_cmds(ser)
+
 
 if __name__ == "__main__":
     main()
-
