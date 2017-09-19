@@ -84,6 +84,9 @@ position_error_label = 'position error (mm)'
 fe_max = 1000
 zoom_plot_fe_max = False
 
+# retain only the last X seconds of data when graphing
+last_x_sec = 5
+
 
 def modbus_crc(dat):
     crc = 0xffff
@@ -315,13 +318,17 @@ def scope_exec(ser, repeat=-1):
     fig = plt.figure()
     fig.canvas.set_window_title('Following-error')
     ax = fig.add_subplot(1, 1, 1)
-    ax.set_xlabel('time (ms)')
+    ax.set_xlabel('time (s)')
     ax.set_ylabel(position_error_label)
-    line_error, = ax.plot(range(ns), range(ns), linestyle=':') #, marker='o', markersize=4)
+    # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
+    line_error, = ax.plot(range(ns), range(ns), linestyle='', marker='.') #, marker='o', markersize=4)
+    # scatter plot helps to see the communication overhead, but is many times slower than line plot
+    #sct_error = ax.scatter(range(ns), range(ns), marker='o')
     plt.ion()
     plt.show()
 
     cummul_error = []
+    cummul_error_x = []
 
     ylimits_max = [0, 0]
     line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
@@ -335,8 +342,22 @@ def scope_exec(ser, repeat=-1):
         plt.axhline(y=v, color='b', linestyle='-')
         plt.text(0, v, k)
 
+    # experimenting with histogram
+    if False:
+        plt.close()
+        fig = plt.figure()
+
     def plot_error():
         if cummul_error != []:
+            # experimenting with histogram
+            if False:
+                plt.clf()
+                n, bins, patches = plt.hist(cummul_error, 50) #, 50, normed=1, facecolor='green', alpha=0.75)
+                plt.ion()
+                plt.show()
+                plt.pause(0.001)
+                return
+
             #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
             #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
             avg_error = sum(cummul_error) / len(cummul_error)
@@ -362,13 +383,27 @@ def scope_exec(ser, repeat=-1):
             #line_error.set_xdata(range(len(error)))
             #line_error.set_ydata(error)
             #line_error.set_data(range(len(error)), error)
-            line_error.set_data(range(len(cummul_error)), cummul_error)
+
+            if cummul_error_x == []:
+                line_error.set_data(range(len(cummul_error)), cummul_error)
+                ax.set_xlim(0, len(cummul_error))
+            else:
+                cummul_error_x2 = np.asarray(cummul_error_x)
+                cummul_error_x2 -= cummul_error_x2[0]
+
+                line_error.set_data(cummul_error_x2, cummul_error)
+
+                #dat = np.vstack((cummul_error_x2, cummul_error)).T
+                #print dat.shape, cummul_error_x[-1] - cummul_error_x[0], cummul_error_x2[0], cummul_error_x2[-1]
+                #sct_error.set_offsets(dat)
+
+                ax.set_xlim(cummul_error_x2[0], cummul_error_x2[-1])
+
             line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
             line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
             line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
             #fig.canvas.draw()
             ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
-            ax.set_xlim(0, len(cummul_error))
 
             for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
                 obj.set_y(v)
@@ -381,19 +416,26 @@ def scope_exec(ser, repeat=-1):
     #run_cmd(ser, cmds[0])
     #time.sleep(.5)
 
+    rt_0 = None
     t1 = timing() # request through response
     t2 = timing() # response only
     t3 = timing() # update to update
+    t4 = timing() # graphing
     timing.enable()
 
     # see notes at top of file regarding timing limitations and overhead
     while repeat == -1 or repeat > 0:
         # request sampling of data of configured duration
         t1.start()
+        rt_s = time.time()
+        if rt_0 == None:
+            rt_0 = rt_s
         run_cmd(ser, cmds[0])
 
         # overlap the sampling with the updating of the graph
+        t4.start()
         plot_error()
+        t4.lap()
 
         # loop until the response indicates the sampling is complete
         while True:
@@ -406,6 +448,7 @@ def scope_exec(ser, repeat=-1):
 
             # check if sampling is complete
             if response[-1]  == 0x02:
+                rt_e = time.time()
                 run_cmd(ser, cmds[2], False)
                 t1.lap()
 
@@ -432,12 +475,13 @@ def scope_exec(ser, repeat=-1):
                 #print time.time(), dt, len(error), error
                 t3.lap()
                 if timing.enabled:
-                    print 'last,min,avg,max', 'req:', t1, 'resp:', t2, 'total:', t3
+                    print 'last,min,avg,max', 'req:', t1, 'resp:', t2, 'total:', t3, 'graph:', t4
 
                 cummul_error += error
-                if len(cummul_error) > ns*5*10:
-                    cummul_error = cummul_error[-ns*5*10:]
-                #print len(cummul_error)
+                cummul_error_x += list(np.linspace(rt_s, rt_e, num=ns, endpoint=True))
+                while cummul_error_x[-1] - cummul_error_x[0] > last_x_sec:
+                    cummul_error = cummul_error[100:]
+                    cummul_error_x = cummul_error_x[100:]
 
                 break
 
