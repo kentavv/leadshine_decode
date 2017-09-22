@@ -51,119 +51,116 @@ from leadshine_easyservo import *
 
 serial_ports = {'z-axis': '/dev/ttyUSB0'}
 
-
-zoom_plot_fe_max = False
-
 # retain only the last X seconds of data for graph
 last_x_sec = 5
 
-ylimits_max = [0, 0]
-ylimits = [-1, 1]
-position_error_label = 'position error (mm)'
-ax = None
 
-line_error = None
-line_min = None
-line_max = None
-line_avg = None
-text_min = None
-text_max = None
-text_avg = None
-
-
-def setup_graph(fe_max):
-    global ax
-
-    fig = plt.figure()
-    fig.canvas.set_window_title('Following-error')
-    ax = fig.add_subplot(1, 1, 1)
-    ax.set_xlabel('time (s)')
-    ax.set_ylabel(position_error_label)
-    plt.ion()
-    plt.show()
-
-    fe_lims = {'-fe limit': -fe_max, '+fe limit': fe_max}
-    for k,v in fe_lims.items():
-        plt.axhline(y=v, color='b', linestyle='-')
-        plt.text(0, v, k)
-
-
-def add_graph(name):
-    global ax
-    global line_error
-    global line_min, line_max, line_avg
-    global text_min, text_max, text_avg
-
+class Plot:
+    zoom_plot_fe_max = False
+    position_error_label = 'position error (mm)'
     ns = 200
 
-    # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
-    line_error, = ax.plot(range(ns), range(ns), linestyle='', marker='.') #, marker='o', markersize=4)
-    # scatter plot helps to see the communication overhead, but is many times slower than line plot
-    #sct_error = ax.scatter(range(ns), range(ns), marker='o')
-    line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
-    line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
-    line_avg = plt.axhline(y=0, color='g', linestyle='-')
-    text_min = plt.text(0, 0, '')
-    text_max = plt.text(0, 0, '')
-    text_avg = plt.text(0, 0, '')
+    ylimits_max = [0, 0]
+    ylimits = [-1, 1]
+    ax = None
 
 
-def plot_error(cummul_error, cummul_error_x):
-    if cummul_error != []:
-        #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
-        #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
-        avg_error = sum(cummul_error) / len(cummul_error)
-        #avg_error = np.mean(cummul_error)
-        #avg_error = np.median(cummul_error)
+    def __init__(self):
+        self.line_error = None
+        self.line_min = None
+        self.line_max = None
+        self.line_avg = None
+        self.text_min = None
+        self.text_max = None
+        self.text_avg = None
+        self.fe_lims = {'-fe limit': 0, '+fe limit': 0}
 
-        ylimits[0] = min(cummul_error)
-        ylimits[1] = max(cummul_error)
-        ylimits[0] = min(ylimits[0], ylimits_max[0])
-        ylimits[1] = max(ylimits[1], ylimits_max[1])
-        ylimits_max[0] = min(ylimits[0], ylimits_max[0])
-        ylimits_max[1] = max(ylimits[1], ylimits_max[1])
-        ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
-        ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
-        if ylimits[0] == ylimits[1]:
-            ylimits[0] = -.01
-            ylimits[1] = .01
 
-        if zoom_plot_fe_max:
-            ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
-            ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
+    @staticmethod
+    def setup_graph():
+        fig = plt.figure()
+        fig.canvas.set_window_title('Following-error')
+        Plot.ax = fig.add_subplot(1, 1, 1)
+        Plot.ax.set_xlabel('time (s)')
+        Plot.ax.set_ylabel(Plot.position_error_label)
+        plt.ion()
+        plt.show()
 
-        #line_error.set_xdata(range(len(error)))
-        #line_error.set_ydata(error)
-        #line_error.set_data(range(len(error)), error)
 
-        if cummul_error_x == []:
-            line_error.set_data(range(len(cummul_error)), cummul_error)
-            ax.set_xlim(0, len(cummul_error))
-        else:
-            cummul_error_x2 = np.asarray(cummul_error_x)
-            cummul_error_x2 -= cummul_error_x2[0]
+    def add_graph(self, ame, fe_max):
+        self.fe_lims = {'-fe limit': -fe_max, '+fe limit': fe_max}
 
-            line_error.set_data(cummul_error_x2, cummul_error)
+        for k,v in self.fe_lims.items():
+            plt.axhline(y=v, color='b', linestyle='-')
+            plt.text(0, v, k)
 
-            #dat = np.vstack((cummul_error_x2, cummul_error)).T
-            #print dat.shape, cummul_error_x[-1] - cummul_error_x[0], cummul_error_x2[0], cummul_error_x2[-1]
-            #sct_error.set_offsets(dat)
+        # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
+        self.line_error, = Plot.ax.plot(range(Plot.ns), range(Plot.ns), linestyle='', marker='.') #, marker='o', markersize=4)
+        # scatter plot helps to see the communication overhead, but is many times slower than line plot
+        #sct_error = Plot.ax.scatter(range(Plot.ns), range(Plot.ns), marker='o')
+        self.line_min = plt.axhline(y=0, color='r', linestyle='-')
+        self.line_max = plt.axhline(y=0, color='r', linestyle='-')
+        self.line_avg = plt.axhline(y=0, color='g', linestyle='-')
+        self.text_min = plt.text(0, 0, '')
+        self.text_max = plt.text(0, 0, '')
+        self.text_avg = plt.text(0, 0, '')
 
-            ax.set_xlim(cummul_error_x2[0], cummul_error_x2[-1])
 
-        line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
-        line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
-        line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
-        #fig.canvas.draw()
-        ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
+    def plot_error(self, cummul_error, cummul_error_x):
+        if cummul_error != []:
+            #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
+            #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+            avg_error = sum(cummul_error) / len(cummul_error)
+            #avg_error = np.mean(cummul_error)
+            #avg_error = np.median(cummul_error)
 
-        for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
-            obj.set_y(v)
-            obj.set_text('{0:.3f} mm'.format(v))
+            ylimits = [min(cummul_error), max(cummul_error)]
+            ylimits[0] = min(ylimits[0], Plot.ylimits_max[0])
+            ylimits[1] = max(ylimits[1], Plot.ylimits_max[1])
+            Plot.ylimits_max[0] = min(ylimits[0], Plot.ylimits_max[0])
+            Plot.ylimits_max[1] = max(ylimits[1], Plot.ylimits_max[1])
+            ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
+            ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
+            if ylimits[0] == ylimits[1]:
+                ylimits[0] = -.01
+                ylimits[1] = .01
 
-        #time.sleep(0.05)
-        #plt.pause(0.0001)
-        plt.pause(0.001)
+            if Plot.zoom_plot_fe_max:
+                ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
+                ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
+
+            #line_error.set_xdata(range(len(error)))
+            #line_error.set_ydata(error)
+            #line_error.set_data(range(len(error)), error)
+
+            if cummul_error_x == []:
+                self.line_error.set_data(range(len(cummul_error)), cummul_error)
+                Plot.ax.set_xlim(0, len(cummul_error))
+            else:
+                cummul_error_x2 = np.asarray(cummul_error_x)
+                cummul_error_x2 -= cummul_error_x2[0]
+
+                self.line_error.set_data(cummul_error_x2, cummul_error)
+
+                #dat = np.vstack((cummul_error_x2, cummul_error)).T
+                #print dat.shape, cummul_error_x[-1] - cummul_error_x[0], cummul_error_x2[0], cummul_error_x2[-1]
+                #sct_error.set_offsets(dat)
+
+                Plot.ax.set_xlim(cummul_error_x2[0], cummul_error_x2[-1])
+
+            self.line_min.set_data(self.line_min.get_data()[0], [Plot.ylimits_max[0]] * 2)
+            self.line_max.set_data(self.line_min.get_data()[0], [Plot.ylimits_max[1]] * 2)
+            self.line_avg.set_data(self.line_avg.get_data()[0], [avg_error] * 2)
+            #fig.canvas.draw()
+            Plot.ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
+
+            for obj, v in zip([self.text_min, self.text_max, self.text_avg], [Plot.ylimits_max[0], Plot.ylimits_max[1], avg_error]):
+                obj.set_y(v)
+                obj.set_text('{0:.3f} mm'.format(v))
+
+            #time.sleep(0.05)
+            #plt.pause(0.0001)
+            plt.pause(0.001)
 
 
 def main():
@@ -176,36 +173,37 @@ def main():
             print 'main(): failed introduction', k
             sys.exit(1)
 
-        ess[k] = es
+        ess[k] = {'drive': es, 'plot': None}
 
     for k,es in ess.items():
-        es.read_parameters()
+        es['drive'].read_parameters()
 
     if True:
         cummul_error = {}
         cummul_error_x = {}
 
+        Plot.setup_graph()
         for k,es in ess.items():
-            setup_graph(es.fe_max * es.step_scale)
-            add_graph(k)
-            es.scope_setup()
+            es['plot'] = Plot()
+            es['plot'].add_graph(k, es['drive'].fe_max * es['drive'].step_scale)
+            es['drive'].scope_setup()
 
             cummul_error[k] = []
             cummul_error_x[k] = []
 
         for k,es in ess.items():
-            es.scope_exec('begin')
+            es['drive'].scope_exec('begin')
 
         while True:
             for k,es in ess.items():
                 time.sleep(.001)
-                error, error_x = es.scope_exec('retrieve')
+                error, error_x = es['drive'].scope_exec('retrieve')
                 if error != []:
                     cummul_error[k] += error
                     cummul_error_x[k] += error_x
 
                     # start next request while finishing up with the latest data
-                    es.scope_exec('begin')
+                    es['drive'].scope_exec('begin')
 
                     # remove data from the front of the buffers until only the last_x seconds remain
                     while cummul_error_x[k][-1] - cummul_error_x[k][0] > last_x_sec:
@@ -214,7 +212,7 @@ def main():
 
                     # overlap the sampling with the updating of the graph
                     t4.start()
-                    plot_error(cummul_error[k], cummul_error_x[k])
+                    es['plot'].plot_error(cummul_error[k], cummul_error_x[k])
                     t4.lap()
 
 
