@@ -25,7 +25,7 @@
 #
 # Kent A. Vander Velden
 # kent.vandervelden@gmail.com
-# Originally written August 23, 2016
+# Originally begun August 23, 2016
 
 
 # Important information on timing overhead
@@ -69,9 +69,17 @@ except AttributeError:
 
 from timing import *
 
+t1 = timing() # request through response
+t2 = timing() # response only
+t3 = timing() # update to update
+t4 = timing() # graphing
 
 serial_port = '/dev/ttyUSB0'
 
+zoom_plot_fe_max = False
+
+# retain only the last X seconds of data when graphing
+last_x_sec = 5
 
 ylimits_max = [0, 0]
 ylimits = [-1, 1]
@@ -145,7 +153,7 @@ def plot_error(cummul_error, cummul_error_x):
             ylimits[0] = -.01
             ylimits[1] = .01
 
-        if LeadshineEasyServo.zoom_plot_fe_max:
+        if zoom_plot_fe_max:
             ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
             ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
 
@@ -184,11 +192,6 @@ def plot_error(cummul_error, cummul_error_x):
 
 
 class LeadshineEasyServo:
-    zoom_plot_fe_max = False
-
-    # retain only the last X seconds of data when graphing
-    last_x_sec = 5
-
 
     def __init__(self):
         self.serial_port = None
@@ -201,6 +204,9 @@ class LeadshineEasyServo:
         # maximum allowed following-error
         # updated after reading parameters
         self.fe_max = 1000
+
+        self.rt_s = 0
+        self.rt_e = 0
 
 
     @staticmethod
@@ -418,7 +424,7 @@ class LeadshineEasyServo:
         self.run_cmds(cmds)
 
 
-    def scope_exec(self, repeat=-1):
+    def scope_exec(self, task):
         cmds = [
           ['scope_begin', None, None, [0x01, 0x06, 0x00, 0x14, 0x00, 0x01]], # begin
           ['scope_check', None, None, [0x01, 0x03, 0x00, 0xDA, 0x00, 0x01]], # repeat until response[-1] == 0x02, waiting 100 millisec or so between
@@ -428,77 +434,60 @@ class LeadshineEasyServo:
         # there are 200 samples regardless of sampling duration, each reading is a word
         ns = 200
 
-        cummul_error = []
-        cummul_error_x = []
-
-        t1 = timing() # request through response
-        t2 = timing() # response only
-        t3 = timing() # update to update
-        t4 = timing() # graphing
         timing.enable()
 
         # see notes at top of file regarding timing limitations and overhead
-        while repeat == -1 or repeat > 0:
+        if task == 'setup':
             # request sampling of data of configured duration
             t1.start()
-            rt_s = time.time()
+            self.rt_s = time.time()
             self.run_cmd(cmds[0])
 
-            # overlap the sampling with the updating of the graph
-            t4.start()
-            plot_error(cummul_error, cummul_error_x)
-            t4.lap()
+        if task == 'execute':
+            response = self.run_cmd(cmds[1])
+            if response == None:
+                print 'scope_exec(): empty_response'
+                return [], []
+            #print 'R', len(response), map(hex, response)
 
-            # loop until the response indicates the sampling is complete
-            while True:
-                time.sleep(.001)
-                response = self.run_cmd(cmds[1])
-                if response == None:
-                    print 'scope_exec(): empty_response'
-                    continue
-                #print 'R', len(response), map(hex, response)
+            # check if sampling is complete
+            if response[-1]  == 0x02:
+                self.rt_e = time.time()
+                self.run_cmd(cmds[2], False)
+                t1.lap()
 
-                # check if sampling is complete
-                if response[-1]  == 0x02:
-                    rt_e = time.time()
-                    self.run_cmd(cmds[2], False)
-                    t1.lap()
+                # each reading is a word, so ns*2 bytes to read
+                t2.start()
+                msg = self.read_response(3+ns*2+2)
+                t2.lap()
 
-                    # each reading is a word, so ns*2 bytes to read
-                    t2.start()
-                    msg = self.read_response(3+ns*2+2)
-                    t2.lap()
+                # starting the new sampling period immediately does not decrease the perceived overhead
+                #run_cmd(ser, cmds[0])
+                #print time.time()
+                #continue
 
-                    # starting the new sampling period immediately does not decrease the perceived overhead
-                    #run_cmd(ser, cmds[0])
-                    #print time.time()
-                    #continue
+                # error = []
+                def h(v):
+                    v = (v[0] << 8) | (v[1])
+                    if v & 0x8000:
+                        v = -(v ^ 0xffff)
+                    return v
+                # join bytes of each word, and then convert to desired units
+                error = map(h, zip(msg[0::2], msg[1::2]))
+                error = map(lambda x: x * self.step_scale, error)
+                #print time.time(), dt, len(error), error
+                t3.lap()
+                if timing.enabled:
+                    print 'last,min,avg,max', 'req:', t1, 'resp:', t2, 'total:', t3, 'graph:', t4
 
-                    # error = []
-                    def h(v):
-                        v = (v[0] << 8) | (v[1])
-                        if v & 0x8000:
-                            v = -(v ^ 0xffff)
-                        return v
-                    # join bytes of each word, and then convert to desired units
-                    error = map(h, zip(msg[0::2], msg[1::2]))
-                    error = map(lambda x: x * self.step_scale, error)
-                    #print time.time(), dt, len(error), error
-                    t3.lap()
-                    if timing.enabled:
-                        print 'last,min,avg,max', 'req:', t1, 'resp:', t2, 'total:', t3, 'graph:', t4
+                error_x = list(np.linspace(self.rt_s, self.rt_e, num=ns, endpoint=True))
 
-                    cummul_error += error
-                    cummul_error_x += list(np.linspace(rt_s, rt_e, num=ns, endpoint=True))
-                    # remove data from the front of the buffers until only the last_x seconds remain
-                    while cummul_error_x[-1] - cummul_error_x[0] > LeadshineEasyServo.last_x_sec:
-                        cummul_error = cummul_error[100:]
-                        cummul_error_x = cummul_error_x[100:]
+                return error, error_x
 
-                    break
+            return [], []
 
-            if repeat >= 0:
-                repeat -= 1
+
+
 
 
     def motion_test(self):
@@ -640,21 +629,48 @@ def main():
         print 'main(): failed introduction'
         sys.exit(1)
 
-    if True:
+    cmds = ['read_parameters', 'graph']
+
+    if 'read_paramters' in cmds:
         es.read_parameters()
 
-    if True:
-        setup_graph(es)
-        es.motion_test()
-
-    if False:
+    if 'current_test' in cmds:
         es.current_test()
 
-    if True:
-        setup_graph(es)
-        es.scope()
+    if 'latest' in cmds:
+        es.latest_cmds(ser)
 
-    #es.latest_cmds(ser)
+    if 'graph' in cmds or 'motion_test' in cmds:
+        setup_graph(es)
+        es.scope_setup()
+
+        if 'motion_test' in cmds:
+            es.motion_test()
+
+        cummul_error = []
+        cummul_error_x = []
+
+        es.scope_exec('setup')
+
+        while True:
+            time.sleep(.001)
+            error, error_x = es.scope_exec('execute')
+            if error != []:
+                cummul_error += error
+                cummul_error_x += error_x
+
+                # start next request while finishing up with the latest data
+                es.scope_exec('setup')
+
+                # remove data from the front of the buffers until only the last_x seconds remain
+                while cummul_error_x[-1] - cummul_error_x[0] > last_x_sec:
+                    cummul_error = cummul_error[100:]
+                    cummul_error_x = cummul_error_x[100:]
+
+                # overlap the sampling with the updating of the graph
+                t4.start()
+                plot_error(cummul_error, cummul_error_x)
+                t4.lap()
 
 
 if __name__ == "__main__":
