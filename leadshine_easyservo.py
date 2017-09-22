@@ -312,13 +312,13 @@ class LeadshineEasyServo:
         timing.enable()
 
         # see notes at top of file regarding timing limitations and overhead
-        if task == 'setup':
+        if task == 'begin':
             # request sampling of data of configured duration
             t1.start()
             self.rt_s = time.time()
             self.run_cmd(cmds[0])
 
-        if task == 'execute':
+        if task == 'retrieve':
             response = self.run_cmd(cmds[1])
             if response == None:
                 print 'scope_exec(): empty_response'
@@ -524,16 +524,16 @@ def main():
         if 'motion_test' in cmds:
             es.motion_test()
 
-        es.scope_exec('setup')
+        es.scope_exec('begin')
 
         while True:
             time.sleep(.001)
-            error, error_x = es.scope_exec('execute')
+            error, error_x = es.scope_exec('retrieve')
             if error != []:
                 print error, error_x
 
                 # start next request while finishing up with the latest data
-                es.scope_exec('setup')
+                es.scope_exec('begin')
 
 
 if __name__ == "__main__":

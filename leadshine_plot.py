@@ -194,18 +194,18 @@ def main():
             cummul_error_x[k] = []
 
         for k,es in ess.items():
-            es.scope_exec('setup')
+            es.scope_exec('begin')
 
-            while True:
-             for k,es in ess.items():
+        while True:
+            for k,es in ess.items():
                 time.sleep(.001)
-                error, error_x = es.scope_exec('execute')
+                error, error_x = es.scope_exec('retrieve')
                 if error != []:
                     cummul_error[k] += error
                     cummul_error_x[k] += error_x
 
                     # start next request while finishing up with the latest data
-                    es.scope_exec('setup')
+                    es.scope_exec('begin')
 
                     # remove data from the front of the buffers until only the last_x seconds remain
                     while cummul_error_x[k][-1] - cummul_error_x[k][0] > last_x_sec:
