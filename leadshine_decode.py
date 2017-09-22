@@ -428,8 +428,6 @@ class LeadshineEasyServo:
         # there are 200 samples regardless of sampling duration, each reading is a word
         ns = 200
 
-        setup_graph(self)
-
         cummul_error = []
         cummul_error_x = []
 
@@ -645,13 +643,15 @@ def main():
     if True:
         es.read_parameters()
 
-    if False:
+    if True:
+        setup_graph(es)
         es.motion_test()
 
     if False:
         es.current_test()
 
     if True:
+        setup_graph(es)
         es.scope()
 
     #es.latest_cmds(ser)
