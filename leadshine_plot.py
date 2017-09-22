@@ -60,57 +60,56 @@ last_x_sec = 5
 ylimits_max = [0, 0]
 ylimits = [-1, 1]
 position_error_label = 'position error (mm)'
-line_error = None
 ax = None
 
-def setup_graph(fe_max):
-    global line_error
-    global ax
-    global line_min, line_max, line_avg
-    global text_min, text_max, text_avg
+line_error = None
+line_min = None
+line_max = None
+line_avg = None
+text_min = None
+text_max = None
+text_avg = None
 
-    ns = 200
+
+def setup_graph(fe_max):
+    global ax
 
     fig = plt.figure()
     fig.canvas.set_window_title('Following-error')
     ax = fig.add_subplot(1, 1, 1)
     ax.set_xlabel('time (s)')
     ax.set_ylabel(position_error_label)
+    plt.ion()
+    plt.show()
+
+    fe_lims = {'-fe limit': -fe_max, '+fe limit': fe_max}
+    for k,v in fe_lims.items():
+        plt.axhline(y=v, color='b', linestyle='-')
+        plt.text(0, v, k)
+
+
+def add_graph(name):
+    global ax
+    global line_error
+    global line_min, line_max, line_avg
+    global text_min, text_max, text_avg
+
+    ns = 200
+
     # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
     line_error, = ax.plot(range(ns), range(ns), linestyle='', marker='.') #, marker='o', markersize=4)
     # scatter plot helps to see the communication overhead, but is many times slower than line plot
     #sct_error = ax.scatter(range(ns), range(ns), marker='o')
-    plt.ion()
-    plt.show()
-
     line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
     line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
     line_avg = plt.axhline(y=0, color='g', linestyle='-')
     text_min = plt.text(0, 0, '')
     text_max = plt.text(0, 0, '')
     text_avg = plt.text(0, 0, '')
-    fe_lims = {'-fe limit': -fe_max, '+fe limit': fe_max}
-    for k,v in fe_lims.items():
-        plt.axhline(y=v, color='b', linestyle='-')
-        plt.text(0, v, k)
-
-    # experimenting with histogram
-    if False:
-        plt.close()
-        fig = plt.figure()
 
 
 def plot_error(cummul_error, cummul_error_x):
     if cummul_error != []:
-        # experimenting with histogram
-        if False:
-            plt.clf()
-            n, bins, patches = plt.hist(cummul_error, 50) #, 50, normed=1, facecolor='green', alpha=0.75)
-            plt.ion()
-            plt.show()
-            plt.pause(0.001)
-            return
-
         #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
         #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
         avg_error = sum(cummul_error) / len(cummul_error)
@@ -188,6 +187,7 @@ def main():
 
         for k,es in ess.items():
             setup_graph(es.fe_max * es.step_scale)
+            add_graph(k)
             es.scope_setup()
 
             cummul_error[k] = []
