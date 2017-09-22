@@ -73,6 +73,116 @@ from timing import *
 serial_port = '/dev/ttyUSB0'
 
 
+ylimits_max = [0, 0]
+ylimits = [-1, 1]
+position_error_label = 'position error (mm)'
+line_error = None
+ax = None
+
+def setup_graph(es):
+    global line_error
+    global ax
+    global line_min, line_max, line_avg
+    global text_min, text_max, text_avg
+
+    ns = 200
+
+    fig = plt.figure()
+    fig.canvas.set_window_title('Following-error')
+    ax = fig.add_subplot(1, 1, 1)
+    ax.set_xlabel('time (s)')
+    ax.set_ylabel(position_error_label)
+    # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
+    line_error, = ax.plot(range(ns), range(ns), linestyle='', marker='.') #, marker='o', markersize=4)
+    # scatter plot helps to see the communication overhead, but is many times slower than line plot
+    #sct_error = ax.scatter(range(ns), range(ns), marker='o')
+    plt.ion()
+    plt.show()
+
+    line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
+    line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
+    line_avg = plt.axhline(y=0, color='g', linestyle='-')
+    text_min = plt.text(0, 0, '')
+    text_max = plt.text(0, 0, '')
+    text_avg = plt.text(0, 0, '')
+    fe_lims = {'-fe limit': -es.fe_max * es.step_scale, '+fe limit': es.fe_max * es.step_scale}
+    for k,v in fe_lims.items():
+        plt.axhline(y=v, color='b', linestyle='-')
+        plt.text(0, v, k)
+
+    # experimenting with histogram
+    if False:
+        plt.close()
+        fig = plt.figure()
+
+
+def plot_error(cummul_error, cummul_error_x):
+    if cummul_error != []:
+        # experimenting with histogram
+        if False:
+            plt.clf()
+            n, bins, patches = plt.hist(cummul_error, 50) #, 50, normed=1, facecolor='green', alpha=0.75)
+            plt.ion()
+            plt.show()
+            plt.pause(0.001)
+            return
+
+        #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
+        #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
+        avg_error = sum(cummul_error) / len(cummul_error)
+        #avg_error = np.mean(cummul_error)
+        #avg_error = np.median(cummul_error)
+
+        ylimits[0] = min(cummul_error)
+        ylimits[1] = max(cummul_error)
+        ylimits[0] = min(ylimits[0], ylimits_max[0])
+        ylimits[1] = max(ylimits[1], ylimits_max[1])
+        ylimits_max[0] = min(ylimits[0], ylimits_max[0])
+        ylimits_max[1] = max(ylimits[1], ylimits_max[1])
+        ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
+        ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
+        if ylimits[0] == ylimits[1]:
+            ylimits[0] = -.01
+            ylimits[1] = .01
+
+        if LeadshineEasyServo.zoom_plot_fe_max:
+            ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
+            ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
+
+        #line_error.set_xdata(range(len(error)))
+        #line_error.set_ydata(error)
+        #line_error.set_data(range(len(error)), error)
+
+        if cummul_error_x == []:
+            line_error.set_data(range(len(cummul_error)), cummul_error)
+            ax.set_xlim(0, len(cummul_error))
+        else:
+            cummul_error_x2 = np.asarray(cummul_error_x)
+            cummul_error_x2 -= cummul_error_x2[0]
+
+            line_error.set_data(cummul_error_x2, cummul_error)
+
+            #dat = np.vstack((cummul_error_x2, cummul_error)).T
+            #print dat.shape, cummul_error_x[-1] - cummul_error_x[0], cummul_error_x2[0], cummul_error_x2[-1]
+            #sct_error.set_offsets(dat)
+
+            ax.set_xlim(cummul_error_x2[0], cummul_error_x2[-1])
+
+        line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
+        line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
+        line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
+        #fig.canvas.draw()
+        ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
+
+        for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
+            obj.set_y(v)
+            obj.set_text('{0:.3f} mm'.format(v))
+
+        #time.sleep(0.05)
+        #plt.pause(0.0001)
+        plt.pause(0.001)
+
+
 class LeadshineEasyServo:
     zoom_plot_fe_max = False
 
@@ -87,7 +197,6 @@ class LeadshineEasyServo:
         # updated after reading parameters
         self.leadscrew_pitch = 5.
         self.step_scale = 1. / 4000. * self.leadscrew_pitch
-        self.position_error_label = 'position error (mm)'
 
         # maximum allowed following-error
         # updated after reading parameters
@@ -310,9 +419,6 @@ class LeadshineEasyServo:
 
 
     def scope_exec(self, repeat=-1):
-        #ylimits = [-10, 10]
-        ylimits = [-1, 1]
-
         cmds = [
           ['scope_begin', None, None, [0x01, 0x06, 0x00, 0x14, 0x00, 0x01]], # begin
           ['scope_check', None, None, [0x01, 0x03, 0x00, 0xDA, 0x00, 0x01]], # repeat until response[-1] == 0x02, waiting 100 millisec or so between
@@ -322,106 +428,10 @@ class LeadshineEasyServo:
         # there are 200 samples regardless of sampling duration, each reading is a word
         ns = 200
 
-        fig = plt.figure()
-        fig.canvas.set_window_title('Following-error')
-        ax = fig.add_subplot(1, 1, 1)
-        ax.set_xlabel('time (s)')
-        ax.set_ylabel(self.position_error_label)
-        # using a linestyle='' and a marker, we have a faster scatter plot than plt.scatter
-        line_error, = ax.plot(range(ns), range(ns), linestyle='', marker='.') #, marker='o', markersize=4)
-        # scatter plot helps to see the communication overhead, but is many times slower than line plot
-        #sct_error = ax.scatter(range(ns), range(ns), marker='o')
-        plt.ion()
-        plt.show()
+        setup_graph(self)
 
         cummul_error = []
         cummul_error_x = []
-
-        ylimits_max = [0, 0]
-        line_min = plt.axhline(y=ylimits_max[0], color='r', linestyle='-')
-        line_max = plt.axhline(y=ylimits_max[1], color='r', linestyle='-')
-        line_avg = plt.axhline(y=0, color='g', linestyle='-')
-        text_min = plt.text(0, 0, '')
-        text_max = plt.text(0, 0, '')
-        text_avg = plt.text(0, 0, '')
-        fe_lims = {'-fe limit': -self.fe_max * self.step_scale, '+fe limit': self.fe_max * self.step_scale}
-        for k,v in fe_lims.items():
-            plt.axhline(y=v, color='b', linestyle='-')
-            plt.text(0, v, k)
-
-        # experimenting with histogram
-        if False:
-            plt.close()
-            fig = plt.figure()
-
-        def plot_error():
-            if cummul_error != []:
-                # experimenting with histogram
-                if False:
-                    plt.clf()
-                    n, bins, patches = plt.hist(cummul_error, 50) #, 50, normed=1, facecolor='green', alpha=0.75)
-                    plt.ion()
-                    plt.show()
-                    plt.pause(0.001)
-                    return
-
-                #ylimits[0] = min(ylimits[0], (min(cummul_error)/50-1)*50)
-                #ylimits[1] = max(ylimits[1], (max(cummul_error)/50+1)*50)
-                avg_error = sum(cummul_error) / len(cummul_error)
-                #avg_error = np.mean(cummul_error)
-                #avg_error = np.median(cummul_error)
-
-                ylimits[0] = min(cummul_error)
-                ylimits[1] = max(cummul_error)
-                ylimits[0] = min(ylimits[0], ylimits_max[0])
-                ylimits[1] = max(ylimits[1], ylimits_max[1])
-                ylimits_max[0] = min(ylimits[0], ylimits_max[0])
-                ylimits_max[1] = max(ylimits[1], ylimits_max[1])
-                ylimits[0] = min(ylimits[0], 0, -abs(ylimits[1]))
-                ylimits[1] = max(ylimits[1], 0, abs(ylimits[0]))
-                if ylimits[0] == ylimits[1]:
-                    ylimits[0] = -.01
-                    ylimits[1] = .01
-
-                if LeadshineEasyServo.zoom_plot_fe_max:
-                    ylimits[0] = min(ylimits[0], fe_lims['-fe limit'])
-                    ylimits[1] = max(ylimits[1], fe_lims['+fe limit'])
-
-                #line_error.set_xdata(range(len(error)))
-                #line_error.set_ydata(error)
-                #line_error.set_data(range(len(error)), error)
-
-                if cummul_error_x == []:
-                    line_error.set_data(range(len(cummul_error)), cummul_error)
-                    ax.set_xlim(0, len(cummul_error))
-                else:
-                    cummul_error_x2 = np.asarray(cummul_error_x)
-                    cummul_error_x2 -= cummul_error_x2[0]
-
-                    line_error.set_data(cummul_error_x2, cummul_error)
-
-                    #dat = np.vstack((cummul_error_x2, cummul_error)).T
-                    #print dat.shape, cummul_error_x[-1] - cummul_error_x[0], cummul_error_x2[0], cummul_error_x2[-1]
-                    #sct_error.set_offsets(dat)
-
-                    ax.set_xlim(cummul_error_x2[0], cummul_error_x2[-1])
-
-                line_min.set_data(line_min.get_data()[0], [ylimits_max[0]] * 2)
-                line_max.set_data(line_min.get_data()[0], [ylimits_max[1]] * 2)
-                line_avg.set_data(line_avg.get_data()[0], [avg_error] * 2)
-                #fig.canvas.draw()
-                ax.set_ylim(ylimits[0] * 1.05, ylimits[1] * 1.05)
-
-                for obj, v in zip([text_min, text_max, text_avg], [ylimits_max[0], ylimits_max[1], avg_error]):
-                    obj.set_y(v)
-                    obj.set_text('{0:.3f} mm'.format(v))
-
-                #time.sleep(0.05)
-                #plt.pause(0.0001)
-                plt.pause(0.001)
-
-        #run_cmd(ser, cmds[0])
-        #time.sleep(.5)
 
         t1 = timing() # request through response
         t2 = timing() # response only
@@ -438,7 +448,7 @@ class LeadshineEasyServo:
 
             # overlap the sampling with the updating of the graph
             t4.start()
-            plot_error()
+            plot_error(cummul_error, cummul_error_x)
             t4.lap()
 
             # loop until the response indicates the sampling is complete
