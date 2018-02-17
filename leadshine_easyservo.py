@@ -476,13 +476,6 @@ class LeadshineEasyServo:
 
 
     def other_cmds(self):
-        #cmds = [
-        #['g1', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x0A]],
-        #['g2', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x01]]
-        #]
-
-        #self.run_cmds(ser, cmds)
-
         cmds = [
         ['h1', None, None, [0x01, 0x03, 0x00, 0x16, 0x00, 0x01]],
         ['h2', None, None, [0x01, 0x03, 0x00, 0x15, 0x00, 0x01]],
@@ -496,6 +489,39 @@ class LeadshineEasyServo:
         self.run_cmds(self.ser, cmds)
 
 
+    def read_alarms(self):
+        # have only seen 1) position following error and 2) no error. might be support for multiple errors or a history of errors
+        # little of the response has been decoded
+
+#Frame000 RX 521929384: 1 3 2 0 20 B9 9C
+#Frame000 TX 540022464: 1 3 0 10 0 A C4 8
+#Frame000 RX 540025004: 1 3 14 0 20 0 20 0 2 0 20 0 0 0 0 0 0 0 0 0 0 0 0 CC B
+#Frame000 TX 540091516: 1 3 0 10 0 1 85 CF
+
+#Frame000 RX 816468624: 1 3 2 0 20 B9 9C
+#Frame000 TX 1021985312: 1 3 0 10 0 A C4 8
+#Frame000 RX 1021987804: 1 3 14 0 0 0 20 0 2 0 20 0 0 0 0 0 0 0 0 0 0 0 0 47 CC
+#Frame000 TX 1022070496: 1 3 0 10 0 1 85 CF
+
+        cmds = [
+        ['read alarms1', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x0A]],
+        ['read alarms2', None, None, [0x01, 0x03, 0x00, 0x10, 0x00, 0x01]]
+        ]
+
+        self.run_cmd(cmds[0], False)
+        msg = self.read_response(25)
+        #print map(hex, msg)
+
+        msg = map(int, msg)
+        if   msg == [0x00, 0x20, 0x00, 0x20, 0x00, 0x02, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]:
+            print 'Alarm: No 0: Position Follow Error - Repower the drive!'
+        elif msg == [0x00, 0x00, 0x00, 0x20, 0x00, 0x02, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]:
+            print 'Alarm: No errors'
+        else:
+            print 'Alarm: Unknown message: ', msg
+        self.run_cmd(cmds[1], False)
+
+
 def main():
     serial_port = '/dev/ttyUSB0'
 
@@ -506,7 +532,10 @@ def main():
         print 'main(): failed introduction'
         sys.exit(1)
 
-    cmds = ['read_parameters', 'graph']
+    cmds = ['read alarms', 'read_parameters', 'graph']
+
+    if 'read alarms':
+        es.read_alarms()
 
     if 'read_paramters' in cmds:
         es.read_parameters()
