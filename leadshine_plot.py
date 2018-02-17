@@ -49,7 +49,9 @@ from timing import *
 from leadshine_easyservo import *
 
 
-serial_ports = {'z-axis': '/dev/ttyUSB0'}
+serial_ports = {'x-axis': '/dev/ttyUSB0',
+                'y-axis': '/dev/ttyUSB1',
+                'z-axis': '/dev/ttyUSB2'}
 
 # retain only the last X seconds of data for graph
 last_x_sec = 5
@@ -206,6 +208,8 @@ def main():
                     es['drive'].scope_exec('begin')
 
                     # remove data from the front of the buffers until only the last_x seconds remain
+                    # XXX this is the last_x seconds received vs. what was received within the last_x seconds
+                    # if no additional data is received, the array is not cleared out
                     while cummul_error_x[k][-1] - cummul_error_x[k][0] > last_x_sec:
                         cummul_error[k] = cummul_error[k][100:]
                         cummul_error_x[k] = cummul_error_x[k][100:]
@@ -215,6 +219,7 @@ def main():
                     es['plot'].plot_error(cummul_error[k], cummul_error_x[k])
                     t4.lap()
 
+                    #print k, cummul_error[k][:10], cummul_error_x[k][:10]
 
 if __name__ == "__main__":
     main()
