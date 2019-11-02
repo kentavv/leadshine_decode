@@ -273,11 +273,11 @@ def main():
                         x_z_diff += [abs(machine_pos[-1] - z_start) * 25.4]
                         y_err += [error[-1]]
 
-                    #if error[-1] > 1.:
+                    if error[-1] > 1.:
                     #if error[-1] > .5:
                     #if error[-1] > .1:
                     #if error[-1] > .05:
-                    if error[-1] > 0:
+                    #if error[-1] > 0:
                         print('STOP!')
                         add_values = False
                     else:
